@@ -1,0 +1,105 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --------------------------------------
+// ENUM (SEÇENEK) TANIMLARI
+// --------------------------------------
+
+enum PolicyType {
+  POLICE
+  PORTFOY_DISI
+  ZEYIL
+}
+
+enum PolicyStatus {
+  ACTIVE
+  CANCELLED
+  EXPIRED
+}
+
+// --------------------------------------
+// TABLO MODELLERİ
+// --------------------------------------
+
+// 1. ACENTE (Kullanıcılar)
+model Agency {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  isVerified           Boolean   @default(false) // Mail doğrulandı mı?
+  verificationToken    String?   // Mail doğrulama kodu
+  resetPasswordToken   String?   // Şifre sıfırlama kodu
+  resetPasswordExpires DateTime? // Sıfırlama kodunun son kullanma tarihi
+  customers Customer[]
+  policies  Policy[]
+}
+
+// 2. MÜŞTERİLER
+model Customer {
+  id          String   @id @default(uuid())
+  agencyId    String
+  agency      Agency   @relation(fields: [agencyId], references: [id])
+  
+  type        String   @default("BIREYSEL")
+  name        String
+  taxId       String?  // TC veya Vergi No
+  phone       String?
+  email       String?
+
+  policies    Policy[] 
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Aynı acente aynı TC ile iki kişi kaydedemesin
+  @@unique([agencyId, taxId])
+}
+
+// 3. POLİÇELER
+model Policy {
+  id              String       @id @default(uuid())
+  
+  agencyId        String
+  agency          Agency       @relation(fields: [agencyId], references: [id])
+  customerId      String
+  customer        Customer     @relation(fields: [customerId], references: [id])
+  insuredName     String?      // Sigortalı Adı Soyadı (Eğer ettirenden farklıysa)
+  insuredTaxId    String?      // Sigortalı TC/Vergi No
+
+  relatedPolicyId String?      
+  relatedPolicy   Policy?      @relation("PolicyHistory", fields: [relatedPolicyId], references: [id])
+  subPolicies     Policy[]     @relation("PolicyHistory")
+
+  policyType      PolicyType   @default(POLICE)
+  productName     String?
+  company         String
+  policyNumber    String
+  seriesNo        String?
+  plate           String?
+
+  startDate       DateTime
+  endDate         DateTime
+  
+  grossPrice      Decimal      @db.Decimal(10, 2)
+  netPrice        Decimal      @db.Decimal(10, 2)
+  
+  status          PolicyStatus @default(ACTIVE) 
+  description     String?
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([agencyId])
+  @@index([plate])
+  @@index([policyNumber])
+}
