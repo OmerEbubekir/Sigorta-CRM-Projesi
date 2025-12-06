@@ -9,6 +9,7 @@ import { generalLimiter } from './middleware/rateLimiter';
 import { checkBannedIp } from './middleware/ipBanMiddleware';
 import adminRoutes from './routes/adminRoutes';
 import cookieParser from 'cookie-parser';
+import paymentRoutes from './routes/paymentRoutes';
 
 dotenv.config();
 // Express uygulamasını başlat
@@ -29,7 +30,7 @@ app.use('/api/customer', customerRoutes);
 app.use('/api/policy', policyRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/admin', adminRoutes);
-
+app.use('/api/payment', paymentRoutes);
 // Uygulamanın ana rotası
 app.get('/', (req, res) => {
     res.send('Sigorta CRM API Çalışıyor! ');

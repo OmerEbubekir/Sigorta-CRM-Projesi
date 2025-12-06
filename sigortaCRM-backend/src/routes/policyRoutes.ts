@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getPolicies, createPolicy, getPolicyById, updatePolicy, deletePolicy, getDashboardStats, getMonthlyStats } from '../controllers/policyController';
 import { authenticateToken } from '../middleware/authMiddleware';
 import { requireVerification } from '../middleware/verificationMiddleware';
+import { checkSubscription } from '../middleware/subscriptionMiddleware';
 
 
 const router = Router();
@@ -9,6 +10,7 @@ const router = Router();
 // TÜM POLİÇE İŞLEMLERİNDE KULLANICI DOĞRULAMASI GEREKİR
 router.use(authenticateToken);
 router.use(requireVerification); // Tüm rotalar için doğrulama gerektirir
+router.use(checkSubscription);
 
 // Poliçe Rotaları
 

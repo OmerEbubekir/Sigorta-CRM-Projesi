@@ -1,3 +1,6 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+/* eslint-disable @typescript-eslint/no-unused-vars */
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
@@ -49,6 +52,10 @@ export default function DashboardPage() {
   const [agencyName, setAgencyName] = useState('');
   const [isVerified, setIsVerified] = useState<boolean | null>(null);
   const [isBanned, setIsBanned] = useState(false);
+  const [isExpired, setIsExpired] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<'MONTHLY' | 'YEARLY'>('MONTHLY');
+  const [processing, setProcessing] = useState(false);
+
   // Filtreler
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -77,8 +84,25 @@ export default function DashboardPage() {
     try {
       const res = await api.get('/dashboard');
       setStats(res.data);
-    } catch (error) { console.error(error); }
-  }, []);
+      return true; // Başarılı
+    } catch (error: any) {
+        // Hata Yönetimi
+        if (error.response) {
+            const status = error.response.status;
+            if (status === 402) {
+                setIsExpired(true);
+            } else if (status === 403) {
+                const code = error.response.data.code;
+                if (code === 'BANNED') setIsBanned(true);
+                else setIsVerified(false);
+            } else if (status === 401) {
+                localStorage.clear();
+                router.push('/login');
+            }
+        }
+        return false; // Başarısız
+    }
+  }, [router]); // Router dışında bağımlılık yok
 
   // 2. Aylık Veriyi Çek
   const fetchMonthlyStats = useCallback(async () => {
@@ -98,15 +122,10 @@ export default function DashboardPage() {
     try {
       const res = await api.get('/policy', {
         params: {
-          page: page,
-          limit: 10,
-          search: debouncedSearch,
-          type: typeFilter || undefined,
-          status: statusFilter || undefined,
-          startDate: startDate || undefined,
-          endDate: endDate || undefined,
-          sortBy: sortBy,
-          sortOrder: sortOrder
+          page, limit: 10, search: debouncedSearch,
+          type: typeFilter || undefined, status: statusFilter || undefined,
+          startDate: startDate || undefined, endDate: endDate || undefined,
+          sortBy, sortOrder
         }
       });
       setPolicies(res.data.data);
@@ -116,71 +135,52 @@ export default function DashboardPage() {
     finally { setTableLoading(false); }
   }, [page, debouncedSearch, typeFilter, statusFilter, startDate, endDate, sortBy, sortOrder]);
 
-
   // --- USE EFFECTLER ---
 
-  // Debounce 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(searchInput);
-      setPage(1);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [searchInput]);
-
-  // İlk Açılış
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) { router.push('/login'); return; }
     setAgencyName(localStorage.getItem('agencyName') || '');
 
-    const initData = async () => {
-      try {
-        // 1. Önce sadece Dashboard verisini çekmeye çalış.
-        // Bu endpoint 'requireVerification' middleware'i ile korunuyor.
-        const res = await api.get('/dashboard');
+    const init = async () => {
+        // Önce sadece ana durumu kontrol et
+        const success = await fetchStats();
         
-        // Eğer 200 OK geldiyse, kesinlikle onaylıdır.
-        setStats(res.data);
-        setIsVerified(true); 
-
-        // Onaylı olduğu için diğer verileri de çekebiliriz
-        // (Burada hata olsa bile isVerified'ı etkilememeli!)
-        fetchMonthlyStats();
-        fetchPolicies();
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } catch (error: any) {
-        // --- HATA YÖNETİMİ ---
-        console.error("Dashboard erişim hatası:", error);
-
-        if (error.response) {
-          if (error.response.status === 403) {
-            const code = error.response.data.code;
-            if (code === 'BANNED') {
-              setIsBanned(true); // <--- YENİ
-          } else {
-              setIsVerified(false); // Sadece onaysız
-          }
-          } else if (error.response.status === 401) {
-            // TOKEN GEÇERSİZ
-            localStorage.clear();
-            router.push('/login');
-          } else {
-             // Başka bir hata (örn 500) olsa bile verified olabilir, false yapma!
-             // Sadece hata mesajı göster.
-             toast.error("Veriler yüklenirken bir sorun oluştu.");
-             // Önemli: setIsVerified(false) BURADA ÇAĞRILMAMALI
-          }
+        if (success) {
+            setIsVerified(true);
+            // Eğer başarılıysa diğerlerini çek
+            await Promise.all([fetchMonthlyStats(), fetchPolicies()]);
         }
-      } finally {
+        
         setInitialLoading(false);
-      }
     };
 
-    initData();
+    init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
+  }, []); // Sadece component mount olduğunda çalışır
+
+// Bu useEffect SADECE kullanıcı filtrelere dokunduğunda çalışmalı.
+  // İlk açılışta çalışmasını engellemek için initialLoading kontrolü yapıyoruz.
+  
+  useEffect(() => {
+    if (!initialLoading && isVerified && !isExpired && !isBanned) {
+        fetchPolicies();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, debouncedSearch, typeFilter, statusFilter, startDate, endDate, sortBy, sortOrder]); // Sadece bu filtreler değişince
+
+  useEffect(() => {
+    if (!initialLoading && isVerified && !isExpired && !isBanned) {
+        fetchMonthlyStats();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMonth, selectedYear]);
+
+  // Debounce
+  useEffect(() => {
+    const timer = setTimeout(() => { setDebouncedSearch(searchInput); setPage(1); }, 500);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
   // Güncellemeler (Sadece Onaylıysa)
   useEffect(() => { if (isVerified === true && !initialLoading) fetchPolicies(); }, [fetchPolicies, isVerified, initialLoading]);
@@ -189,100 +189,134 @@ export default function DashboardPage() {
 
   // --- AKSİYON FONKSİYONLARI ---
 
-  // Silme İşlemi 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Silmek istediğinize emin misiniz?')) return;
-    const toastId = toast.loading('Siliniyor...');
+  // --- DİĞER FONKSİYONLAR ---
+  const handleMockPayment = async () => {
+    if (processing) return;
+    setProcessing(true);
+    const toastId = toast.loading('Ödeme İşleniyor...');
     try {
-      await api.delete(`/policy/${id}`);
-      setPolicies(prev => prev.filter(p => p.id !== id));
-      
-      fetchStats(); 
-      fetchMonthlyStats(); 
-      
-      toast.success('Silindi', { id: toastId });
-    } catch { 
-      toast.error('Hata oluştu', { id: toastId }); 
+        await api.post('/payment/mock-pay', { plan: selectedPlan });
+        toast.success('Ödeme Başarılı! Yönlendiriliyorsunuz...', { id: toastId });
+        setTimeout(() => window.location.reload(), 2000);
+    } catch (e) {
+        toast.error('Hata oluştu', { id: toastId });
+        setProcessing(false);
     }
-  };
+};
 
-  const handlePeriodChange = (newMonth: number, newYear: number) => {
-    setSelectedMonth(newMonth); setSelectedYear(newYear);
-    const firstDay = new Date(newYear, newMonth - 1, 1);
-    const lastDay = new Date(newYear, newMonth, 0); 
-    const formatYMD = (date: Date) => {
-        const y = date.getFullYear(); const m =String(date.getMonth() + 1).padStart(2, '0'); const d = String(date.getDate()).padStart(2, '0');
-        return `${y}-${m}-${d}`;
-    };
-    setStartDate(formatYMD(firstDay)); setEndDate(formatYMD(lastDay)); setPage(1);
-    toast.success(`${newMonth}. Ay verileri listeleniyor`);
+const handlePeriodChange = (newMonth: number, newYear: number) => {
+  setSelectedMonth(newMonth); setSelectedYear(newYear);
+  const firstDay = new Date(newYear, newMonth - 1, 1);
+  const lastDay = new Date(newYear, newMonth, 0); 
+  const formatYMD = (date: Date) => {
+      const y = date.getFullYear(); const m =String(date.getMonth() + 1).padStart(2, '0'); const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
   };
+  setStartDate(formatYMD(firstDay)); setEndDate(formatYMD(lastDay)); setPage(1);
+  toast.success(`${newMonth}. Ay verileri listeleniyor`);
+};
 
-  const handleSort = (column: string) => {
-    if (sortBy === column) setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    else { setSortBy(column); setSortOrder('asc'); }
-  };
+const handleSort = (column: string) => {
+  if (sortBy === column) setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+  else { setSortBy(column); setSortOrder('asc'); }
+};
 
-  const exportToExcel = () => {
-    const dataToExport = policies.map(p => ({
-      'Poliçe Türü': p.policyType, 'Sigortalı': p.insuredName || p.customer.name, 
-      'Sigorta Ettiren': p.customer.name, 'TC/Vergi No': p.insuredTaxId || p.customer.taxId,
-      'İletişim': p.customer.phone || '-','Ürün Adı': p.productName || '-', 'Poliçe Şirketi': p.company, 'Poliçe No': p.policyNumber,
-      'Plaka': p.plate, 'Başlangıç': new Date(p.startDate).toLocaleDateString('tr-TR'), 'Bitiş': new Date(p.endDate).toLocaleDateString('tr-TR'),
-      'Kalan Gün': p.daysLeft, 'Brüt Fiyat': p.grossPrice, 'Net Fiyat': p.netPrice, 'Durum': p.status
-    }));
-    const worksheet = XLSX.utils.json_to_sheet(dataToExport); const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Poliçeler"); XLSX.writeFile(workbook, "Policeler.xlsx"); toast.success('Excel indirildi!');
-  };
+const exportToExcel = () => {
+  const dataToExport = policies.map(p => ({
+    'Poliçe Türü': p.policyType, 'Sigortalı': p.insuredName || p.customer.name, 
+    'Sigorta Ettiren': p.customer.name, 'TC/Vergi No': p.insuredTaxId || p.customer.taxId,
+    'İletişim': p.customer.phone || '-','Ürün Adı': p.productName || '-', 'Poliçe Şirketi': p.company, 'Poliçe No': p.policyNumber,
+    'Plaka': p.plate, 'Başlangıç': new Date(p.startDate).toLocaleDateString('tr-TR'), 'Bitiş': new Date(p.endDate).toLocaleDateString('tr-TR'),
+    'Kalan Gün': p.daysLeft, 'Brüt Fiyat': p.grossPrice, 'Net Fiyat': p.netPrice, 'Durum': p.status
+  }));
+  const worksheet = XLSX.utils.json_to_sheet(dataToExport); const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Poliçeler"); XLSX.writeFile(workbook, "Policeler.xlsx"); toast.success('Excel indirildi!');
+};
 
-  const resetFilters = () => {
-    setSearchInput(''); setDebouncedSearch(''); setTypeFilter(''); setStatusFilter(''); 
-    setStartDate(''); setEndDate(''); setPage(1); setSortBy('endDate'); setSortOrder('asc');
-    setSelectedMonth(new Date().getMonth() + 1); setSelectedYear(new Date().getFullYear());
-    toast.success('Filtreler temizlendi ✨');
-  };
+const resetFilters = () => {
+  setSearchInput(''); setDebouncedSearch(''); setTypeFilter(''); setStatusFilter(''); 
+  setStartDate(''); setEndDate(''); setPage(1); setSortBy('endDate'); setSortOrder('asc');
+  setSelectedMonth(new Date().getMonth() + 1); setSelectedYear(new Date().getFullYear());
+  toast.success('Filtreler temizlendi ✨');
+};
 
-  const handleResend = async () => {
-    const email = localStorage.getItem('email'); 
-    if (!email) { toast.error("Oturum süreniz dolmuş."); return; }
-    const toastId = toast.loading('Mail gönderiliyor...');
-    try {
-      await api.post('/agency/resend-verification', { email });
-      toast.success('Doğrulama maili gönderildi!', { id: toastId });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (err: any) { toast.error(err.response?.data?.error || 'Hata oluştu.', { id: toastId }); }
-  };
+const handleDelete = async (id: string) => {
+  if (!confirm('Silmek istediğinize emin misiniz?')) return;
+  const toastId = toast.loading('Siliniyor...');
+  try {
+    await api.delete(`/policy/${id}`);
+    setPolicies(prev => prev.filter(p => p.id !== id));
+    fetchStats(); fetchMonthlyStats();
+    toast.success('Silindi', { id: toastId });
+  } catch { toast.error('Hata oluştu', { id: toastId }); }
+};
 
-  const formatDate = (date: string) => new Date(date).toLocaleDateString('tr-TR');
-  const formatMoney = (amount: string) => Number(amount).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' });
-  const getRowColor = (days: number, status: string) => {
-    if (status === 'CANCELLED') return 'bg-gray-100 text-gray-400 line-through';
-    if (days <= 3) return 'bg-red-50 text-red-900 border-l-4 border-red-500';
-    if (days <= 7) return 'bg-yellow-50 text-yellow-800 border-l-4 border-yellow-400';
-    if (days <= 14) return 'bg-green-50 text-green-800 border-l-4 border-green-500';
-    return 'bg-white hover:bg-gray-50';
-  };
+const handleResend = async () => {
+  const email = localStorage.getItem('email'); 
+  if (!email) { toast.error("Oturum süreniz dolmuş."); return; }
+  const toastId = toast.loading('Mail gönderiliyor...');
+  try {
+    await api.post('/agency/resend-verification', { email });
+    toast.success('Doğrulama maili gönderildi!', { id: toastId });
+
+  } catch (err: any) { toast.error('Hata oluştu.', { id: toastId }); }
+};
+
+const formatDate = (date: string) => new Date(date).toLocaleDateString('tr-TR');
+const formatMoney = (amount: string) => Number(amount).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' });
+const getRowColor = (days: number, status: string) => {
+  if (status === 'CANCELLED') return 'bg-gray-100 text-gray-400 line-through';
+  if (days <= 3) return 'bg-red-50 text-red-900 border-l-4 border-red-500';
+  if (days <= 7) return 'bg-yellow-50 text-yellow-800 border-l-4 border-yellow-400';
+  if (days <= 14) return 'bg-green-50 text-green-800 border-l-4 border-green-500';
+  return 'bg-white hover:bg-gray-50';
+};
 
   // --- RENDER ---
 
+
   if (initialLoading) {
-    return <div className="flex h-screen items-center justify-center bg-gray-50 text-blue-600 font-medium"><Loader2 className="animate-spin mr-2"/> Kontrol Ediliyor...</div>;
+    return <div className="flex h-screen items-center justify-center bg-gray-50 text-blue-600 font-medium"><Loader2 className="animate-spin mr-2"/> Yükleniyor...</div>;
   }
+
+  // 1. ÖDEME EKRANI (En Öncelikli)
+  if (isExpired) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-gray-50">
+        <div className="bg-white border border-yellow-400 p-10 rounded-2xl shadow-xl w-full max-w-lg text-center relative overflow-hidden">
+          <div className="bg-yellow-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
+            <CreditCard className="text-yellow-600" size={40} />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-800 mb-2">Abonelik Süreniz Doldu</h1>
+          <p className="text-gray-600 mb-8">
+            Hizmetimizi kullanmaya devam etmek için lütfen aboneliğinizi yenileyin.
+            Verileriniz güvende, ödeme sonrası kaldığınız yerden devam edebilirsiniz.
+          </p>
+          
+          <div className="flex justify-center space-x-4 mb-6">
+            <button onClick={() => setSelectedPlan('MONTHLY')} className={`px-4 py-2 rounded-lg transition ${selectedPlan === 'MONTHLY' ? 'bg-yellow-500 text-white shadow-lg' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Aylık (499.90 ₺)</button>
+            <button onClick={() => setSelectedPlan('YEARLY')} className={`px-4 py-2 rounded-lg transition ${selectedPlan === 'YEARLY' ? 'bg-yellow-500 text-white shadow-lg' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Yıllık (4999.00 ₺)</button>
+          </div>
+
+          <button onClick={handleMockPayment} disabled={processing} className={`w-full text-white px-6 py-3 rounded-lg font-bold shadow-md transition flex items-center justify-center gap-2 ${processing ? 'bg-gray-400 cursor-not-allowed' : 'bg-yellow-500 hover:bg-yellow-600'}`}>
+            {processing ? <><Loader2 className="animate-spin" size={20}/> İşleniyor...</> : (selectedPlan === 'MONTHLY' ? 'Aylık Aboneliği Başlat' : 'Yıllık Aboneliği Başlat')}
+          </button>
+          
+          <button onClick={() => { localStorage.clear(); router.push('/login'); }} className="mt-4 text-sm text-gray-400 hover:text-gray-600">Çıkış Yap</button>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. BANLI EKRANI
   if (isBanned) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-gray-50">
         <div className="bg-white border border-red-500 p-10 rounded-2xl shadow-2xl w-full max-w-lg text-center">
-          <div className="bg-red-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
-            <Ban className="text-red-600" size={40} /> 
-          </div>
+          <div className="bg-red-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6"><Ban className="text-red-600" size={40} /></div>
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Erişim Engellendi</h1>
           <p className="text-red-600 font-semibold mb-6">Hesabınız yönetici tarafından askıya alınmıştır.</p>
-          <p className="text-gray-500 text-sm mb-8">
-            Bu işlemin bir hata olduğunu düşünüyorsanız lütfen destek ekibiyle iletişime geçin.
-          </p>
-          <button onClick={() => { localStorage.clear(); router.push('/login'); }} className="w-full bg-gray-900 text-white px-6 py-3 rounded-lg hover:bg-gray-800 transition">
-            Çıkış Yap
-          </button>
+          <button onClick={() => { localStorage.clear(); router.push('/login'); }} className="w-full bg-gray-900 text-white px-6 py-3 rounded-lg hover:bg-gray-800 transition">Çıkış Yap</button>
         </div>
       </div>
     );
@@ -354,6 +388,80 @@ export default function DashboardPage() {
       </div>
     );
   }
+
+  // 3. SÜRESİ BİTEN KULLANICI EKRANI 💸
+  if (isExpired) {
+    // 🔥 ÖDEME İŞLEMİ BAŞLADI
+    const handleMockPayment = async () => {
+      const toastId = toast.loading('Ödeme İşleniyor...');
+      try {
+          // BACKEND'E HANGİ PLANI SEÇTİĞİNİ GÖNDERİYORUZ
+          await api.post('/payment/mock-pay', { plan: selectedPlan }); 
+  
+          toast.success('Ödeme Başarılı! Sisteme yönlendiriliyorsunuz...', { id: toastId });
+          setTimeout(() => window.location.reload(), 2000);
+      } catch (e) {
+          toast.error('Hata oluştu', { id: toastId });
+          setProcessing(false);
+      }
+  };
+
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-gray-50">
+        <div className="bg-white border border-yellow-400 p-10 rounded-2xl shadow-xl w-full max-w-lg text-center relative overflow-hidden">
+          <div className="bg-yellow-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
+            <CreditCard className="text-yellow-600" size={40} />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-800 mb-2">Abonelik Süreniz Doldu</h1>
+          <p className="text-gray-600 mb-8">
+            Hizmetimizi kullanmaya devam etmek için lütfen aboneliğinizi yenileyin.
+            Verileriniz güvende, ödeme sonrası kaldığınız yerden devam edebilirsiniz.
+          </p>
+          
+          <div className="flex justify-center space-x-4 mb-6">
+    <button
+        onClick={() => setSelectedPlan('MONTHLY')}
+        className={`px-4 py-2 rounded-lg transition ${
+            selectedPlan === 'MONTHLY' 
+            ? 'bg-yellow-500 text-white shadow-lg' 
+            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+        }`}
+    >
+        Aylık (499.90 ₺)
+    </button>
+    <button
+        onClick={() => setSelectedPlan('YEARLY')}
+        className={`px-4 py-2 rounded-lg transition ${
+            selectedPlan === 'YEARLY' 
+            ? 'bg-yellow-500 text-white shadow-lg' 
+            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+        }`}
+    >
+        Yıllık (4999.00 ₺ - %16 İndirimli)
+    </button>
+</div>
+
+<button 
+        onClick={handleMockPayment}
+        disabled={processing} 
+        className={`w-full text-white px-6 py-3 rounded-lg font-bold shadow-md transition flex items-center justify-center gap-2 ${
+            processing ? 'bg-gray-400 cursor-not-allowed' : 'bg-yellow-500 hover:bg-yellow-600'
+        }`}
+      >
+        {processing ? (
+            <><Loader2 className="animate-spin" size={20}/> İşleniyor...</>
+        ) : (
+            selectedPlan === 'MONTHLY' ? 'Aylık Aboneliği Başlat' : 'Yıllık Aboneliği Başlat'
+        )}
+      </button>
+          
+          <button onClick={() => router.push('/login')} className="mt-4 text-sm text-gray-400 hover:text-gray-600">Çıkış Yap</button>
+        </div>
+      </div>
+    );
+  }
+
+
   // --- DASHBOARD ---
   return (
     <div className="min-h-screen bg-gray-50 p-4 md:p-8 font-sans text-gray-800">
@@ -501,9 +609,9 @@ export default function DashboardPage() {
 }
 
 // --- YARDIMCI BİLEŞENLER ---
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 function StatBox({ icon, color, title, value }: any) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
   const colors: any = { blue: 'bg-blue-100 text-blue-600', purple: 'bg-purple-100 text-purple-600', red: 'bg-red-100 text-red-600', green: 'bg-green-100 text-green-600' };
   return (
     <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
@@ -513,11 +621,22 @@ function StatBox({ icon, color, title, value }: any) {
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function SortableHeader({ label, sortKey, currentSort, onClick }: any) {
+function SortableHeader({ label, sortKey, currentSort, sortOrder, onClick }: any) {
   return (
     <th className="p-4 font-semibold cursor-pointer hover:bg-gray-200 transition select-none group" onClick={() => onClick(sortKey)}>
-      <div className="flex items-center gap-1">{label}<ArrowUpDown size={14} className={`text-gray-400 ${currentSort === sortKey ? 'text-blue-600' : 'group-hover:text-gray-600'}`} /></div>
+      <div className="flex items-center gap-1">
+        {label}
+        {/* İkon rengi: Seçiliyse mavi, değilse gri */}
+        <ArrowUpDown 
+            size={14} 
+            className={`transition-transform duration-200 ${
+                currentSort === sortKey ? 'text-blue-600' : 'text-gray-400 group-hover:text-gray-600'
+            } ${
+                // Eğer bu sütun seçiliyse ve azalan (desc) sıradaysa oku ters çevir
+                currentSort === sortKey && sortOrder === 'desc' ? 'rotate-180' : ''
+            }`} 
+        />
+      </div>
     </th>
   );
 }

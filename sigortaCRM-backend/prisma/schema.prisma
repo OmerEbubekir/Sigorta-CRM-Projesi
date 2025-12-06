@@ -42,6 +42,10 @@ model Agency {
   resetPasswordToken   String?   // Şifre sıfırlama kodu
   resetPasswordExpires DateTime? // Sıfırlama kodunun son kullanma tarihi
   currentRefreshToken  String?  @db.Text
+  subscriptionEndDate  DateTime  @default(dbgenerated("NOW() + interval '7 days'"))
+  subscriptionPlan     String    @default("TRIAL") // TRIAL, MONTHLY, YEARLY
+
+  payments  Payment[] // Ödeme geçmişi
   customers Customer[]
   policies  Policy[]
   logs      AuditLog[]
@@ -132,4 +136,18 @@ model AuditLog {
   ipAddress String?  // Hangi IP'den?
   
   createdAt DateTime @default(now())
+}
+
+// 7. ÖDEME GEÇMİŞİ TABLOSU
+model Payment {
+  id            String   @id @default(uuid())
+  agencyId      String
+  agency        Agency   @relation(fields: [agencyId], references: [id])
+  
+  amount        Decimal  @db.Decimal(10, 2) // Ne kadar ödedi?
+  currency      String   @default("TRY")
+  paymentStatus String   // SUCCESS, FAILURE
+  iyzicoPaymentId String? // Iyzico'nun verdiği ID (Sorun olursa sorgulamak için)
+  
+  createdAt     DateTime @default(now())
 }
