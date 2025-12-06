@@ -1,13 +1,18 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import redis from '../lib/redis';
 
-export const authenticateToken = (req: Request, res: Response, next: NextFunction) => {
+export const authenticateToken = async (req: Request, res: Response, next: NextFunction) => {
     // Authorization header'ını al
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Bearerdan sonra gelen kısmı alıyoruz yoksa undefined olur
+    const token = authHeader && authHeader.split(' ')[1];//bearer kısmını atıyoruz
 
     // Token yoksa 401 Unauthorized döneriz
+    const isBlacklisted = await redis.get(`blacklist:${token}`);
 
+    if (isBlacklisted) {
+        return res.status(401).json({ error: 'Bu token geçersiz kılınmış (blacklisted).' });
+    }
     if (!token) {
         return res.status(401).json({ error: 'Giriş yapmanız gerekiyor (Token yok).' });
     }

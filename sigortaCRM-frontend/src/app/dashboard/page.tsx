@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import api from '../../lib/api';
-import { Users, FileText, CreditCard, AlertTriangle, LogOut, Search, ChevronLeft, ChevronRight, Loader2, UserPlus, FileDown, ArrowUpDown, RotateCcw, Mail } from 'lucide-react';
+import { Users, FileText, CreditCard, AlertTriangle, LogOut, Search, ChevronLeft, ChevronRight, Loader2, UserPlus, FileDown, ArrowUpDown, RotateCcw, Mail, Ban } from 'lucide-react';
 import Link from 'next/link';
 import * as XLSX from 'xlsx';
 import toast from 'react-hot-toast';
@@ -48,7 +48,7 @@ export default function DashboardPage() {
   const [tableLoading, setTableLoading] = useState(false);
   const [agencyName, setAgencyName] = useState('');
   const [isVerified, setIsVerified] = useState<boolean | null>(null);
-
+  const [isBanned, setIsBanned] = useState(false);
   // Filtreler
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -136,22 +136,41 @@ export default function DashboardPage() {
 
     const initData = async () => {
       try {
+        // 1. Önce sadece Dashboard verisini çekmeye çalış.
+        // Bu endpoint 'requireVerification' middleware'i ile korunuyor.
         const res = await api.get('/dashboard');
+        
+        // Eğer 200 OK geldiyse, kesinlikle onaylıdır.
         setStats(res.data);
         setIsVerified(true); 
 
-        // Diğer verileri çek
-        await Promise.all([fetchMonthlyStats(), fetchPolicies()]); 
+        // Onaylı olduğu için diğer verileri de çekebiliriz
+        // (Burada hata olsa bile isVerified'ı etkilememeli!)
+        fetchMonthlyStats();
+        fetchPolicies();
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (error: any) {
-        console.error("Veri çekme hatası:", error);
+        // --- HATA YÖNETİMİ ---
+        console.error("Dashboard erişim hatası:", error);
+
         if (error.response) {
           if (error.response.status === 403) {
-            setIsVerified(false);
+            const code = error.response.data.code;
+            if (code === 'BANNED') {
+              setIsBanned(true); // <--- YENİ
+          } else {
+              setIsVerified(false); // Sadece onaysız
+          }
           } else if (error.response.status === 401) {
+            // TOKEN GEÇERSİZ
             localStorage.clear();
             router.push('/login');
+          } else {
+             // Başka bir hata (örn 500) olsa bile verified olabilir, false yapma!
+             // Sadece hata mesajı göster.
+             toast.error("Veriler yüklenirken bir sorun oluştu.");
+             // Önemli: setIsVerified(false) BURADA ÇAĞRILMAMALI
           }
         }
       } finally {
@@ -231,7 +250,7 @@ export default function DashboardPage() {
       await api.post('/agency/resend-verification', { email });
       toast.success('Doğrulama maili gönderildi!', { id: toastId });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (err: any) { toast.error('Hata oluştu.', { id: toastId }); }
+    } catch (err: any) { toast.error(err.response?.data?.error || 'Hata oluştu.', { id: toastId }); }
   };
 
   const formatDate = (date: string) => new Date(date).toLocaleDateString('tr-TR');
@@ -249,7 +268,25 @@ export default function DashboardPage() {
   if (initialLoading) {
     return <div className="flex h-screen items-center justify-center bg-gray-50 text-blue-600 font-medium"><Loader2 className="animate-spin mr-2"/> Kontrol Ediliyor...</div>;
   }
-
+  if (isBanned) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-gray-50">
+        <div className="bg-white border border-red-500 p-10 rounded-2xl shadow-2xl w-full max-w-lg text-center">
+          <div className="bg-red-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Ban className="text-red-600" size={40} /> 
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">Erişim Engellendi</h1>
+          <p className="text-red-600 font-semibold mb-6">Hesabınız yönetici tarafından askıya alınmıştır.</p>
+          <p className="text-gray-500 text-sm mb-8">
+            Bu işlemin bir hata olduğunu düşünüyorsanız lütfen destek ekibiyle iletişime geçin.
+          </p>
+          <button onClick={() => { localStorage.clear(); router.push('/login'); }} className="w-full bg-gray-900 text-white px-6 py-3 rounded-lg hover:bg-gray-800 transition">
+            Çıkış Yap
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (isVerified === false) {
     // Kullanıcının emailini alalım
     const email = typeof window !== 'undefined' ? localStorage.getItem('email') : '';
@@ -477,7 +514,7 @@ function StatBox({ icon, color, title, value }: any) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function SortableHeader({ label, sortKey, currentSort, sortOrder, onClick }: any) {
+function SortableHeader({ label, sortKey, currentSort, onClick }: any) {
   return (
     <th className="p-4 font-semibold cursor-pointer hover:bg-gray-200 transition select-none group" onClick={() => onClick(sortKey)}>
       <div className="flex items-center gap-1">{label}<ArrowUpDown size={14} className={`text-gray-400 ${currentSort === sortKey ? 'text-blue-600' : 'group-hover:text-gray-600'}`} /></div>

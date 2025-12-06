@@ -6,13 +6,21 @@ import customerRoutes from './routes/customerRoutes';
 import policyRoutes from './routes/policyRoutes';
 import dashboardRoutes from './routes/dashboardRoutes';
 import { generalLimiter } from './middleware/rateLimiter';
+import { checkBannedIp } from './middleware/ipBanMiddleware';
+import adminRoutes from './routes/adminRoutes';
+import cookieParser from 'cookie-parser';
 
 dotenv.config();
 // Express uygulamasını başlat
 const app = express();
 const PORT = process.env.PORT || 3000;
 // Orta katmanlar
-app.use(cors());
+app.use(cors({
+    origin: 'http://localhost:3001', // Frontend adresi (Yıldız * olmaz, tam adres şart)
+    credentials: true // Cookie'lere izin ver
+}));
+app.use(cookieParser());
+app.use(checkBannedIp);
 app.use(express.json());
 app.use(generalLimiter);// Genel hız sınırlayıcıyı tüm API için uygulama
 // Rotalar
@@ -20,6 +28,7 @@ app.use('/api/agency', agencyRoutes);
 app.use('/api/customer', customerRoutes);
 app.use('/api/policy', policyRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Uygulamanın ana rotası
 app.get('/', (req, res) => {

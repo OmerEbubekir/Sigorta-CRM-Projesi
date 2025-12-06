@@ -13,9 +13,14 @@ export const requireVerification = async (req: Request, res: Response, next: Nex
     // 3. Veritabanından Kullanıcı Bilgisini Al
     const agency = await prisma.agency.findUnique({
         where: { id: agencyId },
-        select: { isVerified: true } // Sadece isVerified bilgisini çek
+        select: { isVerified: true, isBanned: true } // isVerified ve isBanned bilgisini çek
     });
-
+    if (!agency || agency.isBanned) {
+        return res.status(403).json({
+            error: 'Hesabınız askıya alınmıştır. Lütfen yönetici ile iletişime geçin.',
+            code: 'BANNED' // Frontend bunu anlayacak
+        });
+    }
 
     // 4. Doğrulama Durumunu Kontrol Et
     if (!agency || !agency.isVerified) {

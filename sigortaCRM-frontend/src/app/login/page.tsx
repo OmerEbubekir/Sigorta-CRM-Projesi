@@ -6,6 +6,7 @@ import { Lock, Mail, ShieldCheck,ArrowLeft} from 'lucide-react';
 
 import api from '../../lib/api';
 import Link from 'next/link';
+import toast from 'react-hot-toast';
 export default function LoginPage() {
   const router = useRouter();
 
@@ -26,14 +27,28 @@ export default function LoginPage() {
         email,
         password,
       });
+      const tokenToSave = response.data.accessToken || response.data.token; // İkisini de dene
+      
+      if (!tokenToSave) {
+          throw new Error("Sunucudan geçerli bir token alınamadı.");
+      }
 
       // Gelen Token'ı ve İsmi tarayıcıya kaydet
-      localStorage.setItem('token', response.data.token);
+      localStorage.setItem('token', tokenToSave);
+      localStorage.setItem('refreshToken', response.data.refreshToken);
       localStorage.setItem('agencyName', response.data.agency.name);
       localStorage.setItem('email', email);
-      // Başarılı! Dashboard'a yönlendirme işlemi eklenecek
-      router.push('/dashboard'); 
 
+      const userRole = response.data.agency.role; 
+
+// 2. Role göre yönlendir
+      if (userRole === 'ADMIN') {
+          router.push('/admin');
+          toast.success('Giriş Başarılı! Admin sayfasına yönlendiriliyorsunuz.'); // Admin ise Admin sayfasına
+      } else {
+          router.push('/dashboard');
+          toast.success('Giriş Başarılı! Dashboard sayfasına yönlendiriliyorsunuz.');
+      }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       console.error(err);

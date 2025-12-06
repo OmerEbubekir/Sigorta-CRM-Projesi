@@ -35,13 +35,16 @@ model Agency {
   password  String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
+  role      Role     @default(AGENCY)
   isVerified           Boolean   @default(false) // Mail doğrulandı mı?
+  isBanned             Boolean   @default(false)
   verificationToken    String?   // Mail doğrulama kodu
   resetPasswordToken   String?   // Şifre sıfırlama kodu
   resetPasswordExpires DateTime? // Sıfırlama kodunun son kullanma tarihi
+  currentRefreshToken  String?  @db.Text
   customers Customer[]
   policies  Policy[]
+  logs      AuditLog[]
 }
 
 // 2. MÜŞTERİLER
@@ -102,4 +105,31 @@ model Policy {
   @@index([agencyId])
   @@index([plate])
   @@index([policyNumber])
+}
+// 4. ROL SEÇENEKLERİ
+enum Role {
+  AGENCY  // Normal Kullanıcı
+  ADMIN   // Süper Yönetici (Biz)
+}
+
+// 5. YASAKLI IP LİSTESİ (Kara Liste)
+model BannedIp {
+  id        String   @id @default(uuid())
+  ip        String   @unique // Aynı IP iki kere yasaklanmasın
+  reason    String?  // Neden yasakladık? (Örn: "DDoS saldırısı")
+  createdAt DateTime @default(now())
+}
+
+// 6. SİSTEM LOGLARI (Kim ne yaptı?)
+model AuditLog {
+  id        String   @id @default(uuid())
+  
+  agencyId  String?  // Hangi kullanıcı yaptı? (Giriş yapamayanlar için boş olabilir)
+  agency    Agency?  @relation(fields: [agencyId], references: [id])
+
+  action    String   // Ne yaptı? (LOGIN_FAIL, POLICY_CREATE, DELETE_ATTEMPT)
+  details   String?  // Detay (Örn: "Hatalı şifre denemesi")
+  ipAddress String?  // Hangi IP'den?
+  
+  createdAt DateTime @default(now())
 }
